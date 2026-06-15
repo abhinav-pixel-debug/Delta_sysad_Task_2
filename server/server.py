@@ -6,6 +6,15 @@ import hashlib
 import wave
 import os
 import time
+from collections import defaultdict
+
+
+IP_CONNECTION_COUNT = defaultdict(int)
+
+FAILED_LOGINS_BY_IP = defaultdict(int)
+MAX_CONNECTIONS_PER_IP = 50    
+MAX_FAILED_LOGINS_PER_IP = 5
+BAN_SECONDS = 300   
 
 
 SESSIONS={}
@@ -22,6 +31,30 @@ class UserState:
         self.conn=None#For audio connection only
 
 
+def ban_ip(ip): 
+    now = int(time.time())
+    expires = now + BAN_SECONDS
+    conn = sqlite3.connect("music_streaming/music.db")
+    cur = conn.cursor()
+    cur.execute(
+        "INSERT INTO active_Ban (ip_address, banned_at, expires_at) VALUES (?, ?, ?)",
+        (ip, now, expires)
+    )
+    conn.commit()
+    conn.close()
+    print(f"[BAN] IP {ip} banned until {expires}")
+
+def is_ip_banned(ip): 
+    now = int(time.time())
+    conn = sqlite3.connect("music_streaming/music.db")
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT 1 FROM active_Ban WHERE ip_address = ? AND expires_at > ?",
+        (ip, now)
+    )
+    row = cur.fetchone()
+    conn.close()
+    return row is not None
 
 def hash_password(password):
     return hashlib.sha256(password.encode()).hexdigest()
@@ -150,118 +183,91 @@ def stream_song(user_state):
             data=wf.readframes(chunk_size)
 
 # def get_playlists(user_state):
+def process_command(msg, auth, user_state, conn, ip): 
+    parts = msg.split()
 
-
-
-def process_command(message,auth,user_state,conn):
-    mess_list=message.split()
     if not auth:
-        if len(mess_list)==3:
-            if mess_list[0]=="LOGIN":
-                result = login_user(mess_list[1], mess_list[2])
-                if result["status"]:
-                    user_id=result["message"]
-                    if str(user_id) in SESSIONS.keys() :
-                        user_state=SESSIONS[str(user_id)]
+        if len(parts) == 3 and parts[0] == "LOGIN":
+            username = parts[1]
+            password = parts[2]
 
-                    else:
-                        user_state=UserState(user_id)
-                        SESSIONS[user_state.session_id]=user_state
+            if is_ip_banned(ip):
+                return {"status": False, "message": "Your IP is banned"}, False, user_state
 
-                    return result, result["status"],user_state
-                return result, result["status"], user_state
+            result = login_user(username, password)
 
-            elif mess_list[0]=="REGISTER":
-                return create_user(mess_list[1],mess_list[2]), False,user_state
+            if result["status"]:
+                FAILED_LOGINS_BY_IP[ip] = 0
 
-        return{
-            "status":False,
-            "message":"Invalid input"
-        },auth,user_state
-    else: 
-        # if mess_list[0]=="GET_PLAYLIST":
-        #     #FUNCTION HERE WHICH COMMUNICATES WITH THE DB AND VERIFIES IT 
-        if mess_list[0]=="PLAY":
-            if len(mess_list) < 2:
-                return {
-                    "status": False,
-                    "message": "No track id provided"
-                }, auth, user_state
+                user_id = result["message"]
+                if str(user_id) in SESSIONS:
+                    user_state = SESSIONS[str(user_id)]
+                else:
+                    user_state = UserState(user_id)
+                    SESSIONS[user_state.session_id] = user_state
+                return result, True, user_state
+            else:
+            
+                FAILED_LOGINS_BY_IP[ip] += 1
+                if FAILED_LOGINS_BY_IP[ip] >= MAX_FAILED_LOGINS_PER_IP:
+                    ban_ip(ip)
+                    return {"status": False, "message": "Too many failed attempts, IP banned"}, False, user_state
+                return result, False, user_state
 
-            try:
-                track_id = int(mess_list[1])
-            except ValueError:
-                return {
-                    "status": False,
-                    "message": "Track id must be an integer"
-                }, auth, user_state
+        elif len(parts) == 3 and parts[0] == "REGISTER":
+            return create_user(parts[1], parts[2]), False, user_state
 
-            user_state.current_track_id = track_id
-            user_state.playback_position = 0
-            user_state.playing = True
-            user_state.paused = False
+        else:
+            return {"status": False, "message": "Invalid input"}, auth, user_state
 
-            return {
-                "status": True,
-                "message": f"Started streaming track {track_id}"
-            }, auth, user_state
-         
-        elif mess_list[0]=="PAUSE":
-            if not user_state.playing:
-                return{
-                    "status":False,
-                    "message":"Nothing is playing"
-                },auth, user_state
-            user_state.paused=True
-            return{
-                "status":True,
-                "message":"Paused"
-            },auth, user_state
+    # already authenticated
+    if parts[0] == "PLAY":
+        if len(parts) < 2:
+            return {"status": False, "message": "No track id provided"}, auth, user_state
+        try:
+            track_id = int(parts[1])
+        except ValueError:
+            return {"status": False, "message": "Track id must be integer"}, auth, user_state
+        user_state.current_track_id = track_id
+        user_state.playing = True
+        user_state.paused = False
+        return {"status": True, "message": f"Started {track_id}"}, auth, user_state
 
-        elif mess_list[0]=="RESUME":
-            if not user_state.playing:
-                return{
-                    "status":False,
-                    "message":"Nothing is playing"
-                },auth, user_state
-            if not user_state.paused:
-                return {
-                    "status": False,
-                    "message": "Already playing"
-                }, auth, user_state
+    elif parts[0] == "PAUSE":
+        if not user_state or not user_state.playing:
+            return {"status": False, "message": "Nothing is playing"}, auth, user_state
+        user_state.paused = True
+        return {"status": True, "message": "Paused"}, auth, user_state
 
-            user_state.paused = False
-            return {
-                "status": True,
-                "message": "Resumed"
-            }, auth, user_state
-       
-        elif mess_list[0]=="EXIT":
-            return {
-                "status":True,
-                "message":"Goodbye"
-            },False,user_state
+    elif parts[0] == "RESUME":
+        if not user_state or not user_state.playing:
+            return {"status": False, "message": "Nothing is playing"}, auth, user_state
+        user_state.paused = False
+        return {"status": True, "message": "Resumed"}, auth, user_state
 
-        return{
-            "status":False,
-            "message":"Invalid input"
-        },auth,user_state
+    elif parts[0] == "EXIT":
+        return {"status": True, "message": "Goodbye"}, False, user_state
 
-    
+    return {"status": False, "message": "Invalid input"}, auth, user_state
 
 
 def handle_client(conn, addr):
+    ip = addr[0]
     print(f"Connected by {addr}")
-    auth=False
-    user_state=None
-    while True:
-        data = conn.recv(1024).decode()
-        if not data:
-            break
-        message,auth,user_state=process_command(data,auth,user_state,conn)
-        conn.sendall(json.dumps(message).encode()) 
-    conn.close()
-    print(f"Connection closed by {addr}")
+    auth = False
+    user_state = None
+    try:
+        while True:
+            data = conn.recv(1024).decode()
+            if not data:
+                break
+            resp, auth, user_state = process_command(data, auth, user_state, conn, ip)
+            conn.sendall(json.dumps(resp).encode())
+    finally:
+        conn.close()
+        if IP_CONNECTION_COUNT[ip] > 0:
+            IP_CONNECTION_COUNT[ip] -= 1
+        print(f"Connection closed by {addr}")
 
 def handle_audio_client(conn, addr, first_line):
     print(f"[AUDIO] Connected by {addr}")
@@ -271,7 +277,7 @@ def handle_audio_client(conn, addr, first_line):
         conn.close()
         return
 
-    user_id = parts[1]  # AUDIO <user_id>
+    user_id = parts[1]
     user_state = SESSIONS.get(str(user_id))
     if user_state is None:
         print(f"[AUDIO] Unknown user_id {user_id}")
@@ -283,20 +289,6 @@ def handle_audio_client(conn, addr, first_line):
     conn.close()
     user_state.conn = None
     print(f"[AUDIO CLOSED] {addr}")
-
-# def dispatch_client(conn, addr):
-#     try:
-#         first = conn.recv(1024).decode().strip()
-#         if first.startswith("CONTROL"):
-#             handle_client(conn, addr)
-#         elif first.startswith("AUDIO"):
-#             handle_audio_client(conn, addr, first)
-#         else:
-#             print(f"Unknown connection type from {addr}: {first}")
-#             conn.close()
-#     except Exception as e:
-#         print(f"Error in dispatch_client: {e}")
-#         conn.close()
 
 
 def dispatch_client(conn, addr):
@@ -336,9 +328,24 @@ server.bind(('localhost', 65432))
 server.listen()
 print("Server is listening on port 65432...")
 
+
 while True:
     conn, addr = server.accept()
-    thread = threading.Thread(target=dispatch_client, args=(conn, addr))
-    thread.start()
+    ip = addr[0]
 
+    if is_ip_banned(ip):
+        print(f"Rejected banned IP {ip}")
+        conn.close()
+        continue
 
+    # 2) Simple connection count limit per IP  <<< ADDED
+    if IP_CONNECTION_COUNT[ip] >= MAX_CONNECTIONS_PER_IP:
+        print(f"Too many connections from {ip}, banning")
+        ban_ip(ip)
+        conn.close()
+        continue
+
+    IP_CONNECTION_COUNT[ip] += 1 
+
+    t = threading.Thread(target=dispatch_client, args=(conn, addr))
+    t.start()

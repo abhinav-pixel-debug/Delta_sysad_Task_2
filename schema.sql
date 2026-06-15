@@ -7,7 +7,7 @@ CREATE TABLE IF NOT EXISTS users (
 
 CREATE TABLE IF NOT EXISTS artists (
     artist_id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL UNIQUE
+    name TEXT NOT NULL 
 );
 
 CREATE TABLE IF NOT EXISTS albums (
@@ -52,10 +52,10 @@ CREATE TABLE IF NOT EXISTS listening_history (
     FOREIGN KEY (song_id) REFERENCES songs(song_id)
 );
 
-CREATE TABLE IF NOT EXISTS active_ban(
+CREATE TABLE IF NOT EXISTS Active_ban(
     ban_id INTEGER PRIMARY KEY AUTOINCREMENT,
     ip_address TEXT NOT NULL,
-    reason TEXT NOT NULL,
     banned_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     expires_at DATETIME NOT NULL
 );
+
