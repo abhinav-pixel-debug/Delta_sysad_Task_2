@@ -100,7 +100,11 @@ def menu(user_id):
         print("1. Play")
         print("2. Pause")
         print("3. Resume")
-        print("4. Exit")
+        print("4. Add songs to playlist")
+        print("5. Create Playlist")
+        print("6. Show Playlists")
+        print("7. Show songs in playlist")
+        print("8. Exit")
         choice = input("Choice: ").strip()
         if choice == '1':
             if audio_thread and audio_thread.is_alive():
@@ -120,7 +124,40 @@ def menu(user_id):
         elif choice=='3':
             resp=send_command("RESUME")
             print(resp)
-        elif choice=='4':
+        elif choice=='5':
+            name=input("Enter the name of playlist")
+            resp=send_command(f"CREATE {name}")
+            print(resp)
+        elif choice=='6':
+            resp=send_command("SHOW")
+            if resp["status"]:
+                print(resp["message"])
+                for row in resp["data"]:
+                    print(f"Name:{row['name']} Id:{row['playlist_id']}")
+            else:
+                print(resp["message"])
+        elif choice == '6':
+            user_id = int(input("Enter user id: "))
+            resp = send_command("SHOW", user_id)
+
+            if resp["status"]:
+                print(resp["message"])
+                for row in resp["data"]:
+                    print(f"Playlist Name: {row['name']} | Playlist ID: {row['playlist_id']}")
+            else:
+                print(resp["message"])
+  
+        elif choice=='7':
+            id=input("Enter playlist id")
+            resp=send_command(f"LIST {id}")
+            if resp["status"]:
+                print(resp["message"])
+                for row in resp["data"]:
+                    print(f"Song ID: {row['song_id']} | Title: {row['title']}")
+            else:
+                print(resp["message"])
+                
+        elif choice=='8':
             resp=send_command("EXIT")
             print(resp)
             break

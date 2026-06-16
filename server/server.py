@@ -182,7 +182,118 @@ def stream_song(user_state):
             user_state.playback_position+=1
             data=wf.readframes(chunk_size)
 
-# def get_playlists(user_state):
+def create_playlist(user_id,name):
+    conn=sqlite3.connect('music_streaming/music.db')
+    cursor=conn.cursor()
+    try:
+        cursor.execute("INSERT INTO playlists (user_id,name) VALUES (?,?) ",(user_id,name))
+        conn.commit()
+        return{
+            "status":True,
+            "message":"Playlist created"
+        }
+    except Exception as e:
+        return {
+            "status": False,
+            "message": f"Some error occurred: {str(e)}",
+        }
+    finally:
+        conn.close()
+
+def show_playlist(user_id):
+    conn = sqlite3.connect('music_streaming/music.db')
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute(
+            "SELECT name, playlist_id FROM playlists WHERE user_id = ?",
+            (user_id,)
+        )
+        rows = cursor.fetchall()
+
+        if not rows:
+            return {
+                "status": False,
+                "message": "No playlists found",
+                "data": []
+            }
+
+        data = []
+        for row in rows:
+            data.append({
+                "name": row[0],
+                "playlist_id": row[1]
+            })
+
+        return {
+            "status": True,
+            "message": "Playlists:",
+            "data": data
+        }
+
+    except Exception as e:
+        return {
+            "status": False,
+            "message": f"Some error occurred: {str(e)}",
+            "data": []
+        }
+
+    finally:
+        conn.close()
+
+def list_songs(playlist_id):
+    conn = sqlite3.connect('music_streaming/music.db')
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute(
+            "SELECT song_id FROM playlist_songs WHERE playlist_id = ?",
+            (playlist_id,)
+        )
+        song_ids = cursor.fetchall()
+
+        if not song_ids:
+            return {
+                "status": True,
+                "message": "No songs found in playlist",
+                "data": []
+            }
+
+        songs = []
+
+        for item in song_ids:
+            song_id = item[0]
+
+            cursor.execute(
+                "SELECT song_id, title FROM songs WHERE song_id = ?",
+                (song_id,)
+            )
+            row = cursor.fetchone()
+
+            if row:
+                songs.append({
+                    "song_id": row[0],
+                    "title": row[1]
+                })
+
+        return {
+            "status": True,
+            "message": "Songs found",
+            "data": songs
+        }
+
+    except Exception as e:
+        return {
+            "status": False,
+            "message": f"Some error occurred: {str(e)}",
+            "data": []
+        }
+
+    finally:
+        conn.close()
+
+
+
 def process_command(msg, auth, user_state, conn, ip): 
     parts = msg.split()
 
@@ -244,7 +355,15 @@ def process_command(msg, auth, user_state, conn, ip):
             return {"status": False, "message": "Nothing is playing"}, auth, user_state
         user_state.paused = False
         return {"status": True, "message": "Resumed"}, auth, user_state
-
+    elif parts[0]=="CREATE":
+        result=create_playlist(part[1],user_state.user_id)
+        return result, auth, user_state
+    elif parts[0]=="LIST":
+        result=create_playlist(int(part[1]),user_state.user_id)
+        return result, auth, user_state
+    elif parts[0]=="SHOW":
+        result=show_playlist(user_state.user_id)
+        return result, auth, user_state
     elif parts[0] == "EXIT":
         return {"status": True, "message": "Goodbye"}, False, user_state
 
@@ -338,7 +457,6 @@ while True:
         conn.close()
         continue
 
-    # 2) Simple connection count limit per IP  <<< ADDED
     if IP_CONNECTION_COUNT[ip] >= MAX_CONNECTIONS_PER_IP:
         print(f"Too many connections from {ip}, banning")
         ban_ip(ip)
