@@ -7,10 +7,25 @@ import wave
 import os
 import time
 from collections import defaultdict
+import shutil   
+
+def backup_database():
+    os.makedirs("music_streaming/backups", exist_ok=True)
+    timestamp = time.strftime("%Y%m%d-%H%M%S")
+    backup_path = os.path.join("music_streaming/backups", f"music-{timestamp}.db")
+    shutil.copy2("music_streaming/music.db", backup_path)
+    print(f"[BACKUP] Saved DB backup to {backup_path}")
+
+def backup_loop():
+    while True:
+        time.sleep(30)  
+        try:
+            backup_database()
+        except Exception as e:
+            print(f"[BACKUP ERROR] {e}")
 
 
 IP_CONNECTION_COUNT = defaultdict(int)
-
 FAILED_LOGINS_BY_IP = defaultdict(int)
 MAX_CONNECTIONS_PER_IP = 50    
 MAX_FAILED_LOGINS_PER_IP = 5
@@ -24,11 +39,10 @@ class UserState:
         self.user_id=user_id
         self.current_track_id=None
         self.playback_position=0
-        self.queue=[]#MOSTLY WE WILL NOT NEED IT 
         self.playing=False
         self.paused=False
         self.buffer_health=0
-        self.conn=None#For audio connection only
+        self.conn=None
 
 
 def ban_ip(ip): 
@@ -95,7 +109,6 @@ def login_user(username,password):
     try:
         cursor.execute("SELECT user_id, password_HASH FROM users WHERE username = ?", (username,))
         row=cursor.fetchone()
-        print(row)
         if row is None:
             return{
                 "status":False,
@@ -103,13 +116,11 @@ def login_user(username,password):
             }
         user_id, store_password=row
         if check_password(password,store_password):
-            print("Okay password")
             return{
                 "status":True,
                 "message":user_id
             }    
         else:
-            print("Wrong password")
             return{
                 "status":False,
                 "message":"Invalid password"
@@ -124,7 +135,7 @@ def login_user(username,password):
         conn.close()
 
 
-music_dir="music_streaming/music"
+
 
 def get_song_path(track_id):
     conn=sqlite3.connect('music_streaming/music.db')
@@ -138,7 +149,6 @@ def get_song_path(track_id):
                 "message":"Wrong track id"
             }
         filepath=row[0]
-        # fullpath=os.path.join(music_dir,filepath)
         return{
             "status":True,
             "message":filepath
@@ -160,7 +170,6 @@ def stream_song(user_state):
     if conn is None:
         return
 
-
     path_result=get_song_path(track_id)
     if not path_result["status"]:
         print(path_result["message"])
@@ -177,8 +186,14 @@ def stream_song(user_state):
                 continue
             try:
                 conn.sendall(data)
+                user_state.buffer_health = 0
             except Exception:
-                break
+                user_state.buffer_health += 1
+                print(f"Send error, buffer_health={user_state.buffer_health}")
+                if user_state.buffer_health > 5:
+                    break
+                time.sleep(0.1)
+                continue
             user_state.playback_position+=1
             data=wf.readframes(chunk_size)
 
@@ -246,35 +261,26 @@ def list_songs(playlist_id):
     cursor = conn.cursor()
 
     try:
-        cursor.execute(
-            "SELECT song_id FROM playlist_songs WHERE playlist_id = ?",
-            (playlist_id,)
-        )
-        song_ids = cursor.fetchall()
+        cursor.execute("""
+            SELECT s.song_id, s.title
+            FROM songs s
+            JOIN playlist_songs ps ON s.song_id = ps.song_id
+            WHERE ps.playlist_id = ?
+        """, (playlist_id,))
 
-        if not song_ids:
+        rows = cursor.fetchall()
+
+        if not rows:
             return {
                 "status": True,
                 "message": "No songs found in playlist",
                 "data": []
             }
 
-        songs = []
-
-        for item in song_ids:
-            song_id = item[0]
-
-            cursor.execute(
-                "SELECT song_id, title FROM songs WHERE song_id = ?",
-                (song_id,)
-            )
-            row = cursor.fetchone()
-
-            if row:
-                songs.append({
-                    "song_id": row[0],
-                    "title": row[1]
-                })
+        songs = [
+            {"song_id": row[0], "title": row[1]}
+            for row in rows
+        ]
 
         return {
             "status": True,
@@ -292,7 +298,129 @@ def list_songs(playlist_id):
     finally:
         conn.close()
 
+def search_songs(name):
+    conn = sqlite3.connect('music_streaming/music.db')
+    cursor = conn.cursor()
 
+    try:
+        cursor.execute("""
+            SELECT songs.title, songs.song_id, artists.name
+            FROM songs
+            JOIN artists ON songs.artist_id = artists.artist_id
+            WHERE LOWER(songs.title) LIKE LOWER(?)
+        """, (f"{name}%",))
+
+        rows = cursor.fetchall()
+        if not rows:
+            return {
+                "status": True,
+                "message": "No songs found",
+                "data": []
+            }
+
+        data = []
+        for row in rows:
+            data.append({
+                "title": row[0],
+                "song_id": row[1],
+                "artist_name": row[2]
+            })
+        return {
+            "status": True,
+            "message": "Songs found",
+            "data": data
+        }
+
+    except Exception as e:
+        return {
+            "status": False,
+            "message": f"Some error occurred: {str(e)}",
+            "data": []
+        }
+
+    finally:
+        conn.close()
+
+def add_to_playlist(p_id,s_id):
+    conn = sqlite3.connect('music_streaming/music.db')
+    cursor = conn.cursor()
+    try:
+        cursor.execute("INSERT INTO playlist_songs (playlist_id,song_id) VALUES (?,?) ",(p_id,s_id))
+        conn.commit()
+        return{
+            "status":True,
+            "message":"Song added to Playlist"
+        }
+    except Exception as e:
+        return {
+            "status": False,
+            "message": f"Some error occurred: {str(e)}",
+        }
+    finally:
+        conn.close()
+
+def add_listening_history(user_id, song_id):
+    conn = sqlite3.connect('music_streaming/music.db')
+    cursor = conn.cursor()
+    try:
+        listened_at = int(time.time())  
+        cursor.execute(
+            "INSERT INTO listening_history (user_id, song_id, listened_at) VALUES (?, ?, ?)",
+            (user_id, song_id, listened_at)
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+def view_history(user_id):
+    conn = sqlite3.connect('music_streaming/music.db')
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute("""
+            SELECT listening_history.listened_at,
+                   songs.title,
+                   songs.song_id,
+                   artists.name
+            FROM listening_history
+            JOIN songs   ON listening_history.song_id = songs.song_id
+            JOIN artists ON songs.artist_id = artists.artist_id
+            WHERE listening_history.user_id = ?
+        """, (user_id,))
+
+        rows = cursor.fetchall()
+
+        if not rows:
+            return {
+                "status": True,
+                "message": "No songs found",
+                "data": []
+            }
+
+        data = []
+        for row in rows:
+            data.append({
+                "listened_at": row[0],
+                "title":       row[1],
+                "song_id":     row[2],
+                "artist_name": row[3]
+            })
+
+        return {
+            "status": True,
+            "message": "Songs found",
+            "data": data
+        }
+
+    except Exception as e:
+        return {
+            "status": False,
+            "message": f"Some error occurred: {str(e)}",
+            "data": []
+        }
+
+    finally:
+        conn.close()
 
 def process_command(msg, auth, user_state, conn, ip): 
     parts = msg.split()
@@ -331,7 +459,6 @@ def process_command(msg, auth, user_state, conn, ip):
         else:
             return {"status": False, "message": "Invalid input"}, auth, user_state
 
-    # already authenticated
     if parts[0] == "PLAY":
         if len(parts) < 2:
             return {"status": False, "message": "No track id provided"}, auth, user_state
@@ -342,6 +469,9 @@ def process_command(msg, auth, user_state, conn, ip):
         user_state.current_track_id = track_id
         user_state.playing = True
         user_state.paused = False
+        user_state.buffer_health = 0
+        add_listening_history(user_state.user_id,track_id)
+
         return {"status": True, "message": f"Started {track_id}"}, auth, user_state
 
     elif parts[0] == "PAUSE":
@@ -356,15 +486,49 @@ def process_command(msg, auth, user_state, conn, ip):
         user_state.paused = False
         return {"status": True, "message": "Resumed"}, auth, user_state
     elif parts[0]=="CREATE":
-        result=create_playlist(part[1],user_state.user_id)
-        return result, auth, user_state
+        if len(parts) == 2:
+            result=create_playlist(user_state.user_id,parts[1])
+            return result, auth, user_state
+        else:
+            return {
+                "status":False,
+                "message":"Invalid Input"
+            }, auth, user_state
+
     elif parts[0]=="LIST":
-        result=create_playlist(int(part[1]),user_state.user_id)
-        return result, auth, user_state
+        if len(parts) == 2:
+            result=list_songs(parts[1])
+            return result, auth, user_state
+        else:
+            return {
+                "status":False,
+                "message":"Invalid Input"
+            }, auth, user_state
+
     elif parts[0]=="SHOW":
         result=show_playlist(user_state.user_id)
         return result, auth, user_state
+
+    elif parts[0]=="SEARCH":
+        if len(parts) >= 2:
+            name = " ".join(parts[1:])
+            result=search_songs(name)
+            return result, auth, user_state
+        else:
+            return {
+                "status":False,
+                "message":"Invalid Input"
+            }, auth, user_state
+    elif parts[0]=="ADD":
+        if len(parts) == 3:
+            result=add_to_playlist(parts[1],parts[2])
+            return result, auth, user_state
+    elif parts[0]=="HISTORY":
+        result=view_history(user_state.user_id)
+        return result, auth, user_state
+
     elif parts[0] == "EXIT":
+        user_state.conn.close()
         return {"status": True, "message": "Goodbye"}, False, user_state
 
     return {"status": False, "message": "Invalid input"}, auth, user_state
@@ -446,7 +610,7 @@ server=socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 server.bind(('localhost', 65432))
 server.listen()
 print("Server is listening on port 65432...")
-
+threading.Thread(target=backup_loop, daemon=True).start()
 
 while True:
     conn, addr = server.accept()

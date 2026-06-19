@@ -56,16 +56,14 @@ def auth():
 
 
 def play_with_pyaudio(user_id, track_id):
-    # 1. Tell server which track on control socket
-    resp = send_command(f"PLAY {track_id}")
-    print(resp)
 
-    # 2. Open audio socket
+    resp = send_command(f"PLAY {track_id}")
+    print(resp['message'])
+
     audio_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     audio_sock.connect(('localhost', 65432))
     audio_sock.sendall(f"AUDIO {user_id}\n".encode())
 
-    # 3. PyAudio setup (must match server WAV format)
     CHUNK = 4096
     FORMAT = pyaudio.paInt16
     CHANNELS = 2
@@ -100,11 +98,13 @@ def menu(user_id):
         print("1. Play")
         print("2. Pause")
         print("3. Resume")
-        print("4. Add songs to playlist")
-        print("5. Create Playlist")
-        print("6. Show Playlists")
-        print("7. Show songs in playlist")
-        print("8. Exit")
+        print("4. Create Playlist")
+        print("5. Show Playlists")
+        print("6. Show songs in playlist")
+        print("7. Search song")
+        print("8. Add song to playlist")
+        print("9. Listening History")
+        print("10. Exit")
         choice = input("Choice: ").strip()
         if choice == '1':
             if audio_thread and audio_thread.is_alive():
@@ -120,25 +120,17 @@ def menu(user_id):
             audio_thread.start()
         elif choice=='2':
             resp=send_command("PAUSE")
-            print(resp)
+            print(resp['message'])
         elif choice=='3':
             resp=send_command("RESUME")
-            print(resp)
-        elif choice=='5':
-            name=input("Enter the name of playlist")
+            print(resp['message'])
+        elif choice=='4':
+            name=input("Enter the name of playlist:")
             resp=send_command(f"CREATE {name}")
-            print(resp)
-        elif choice=='6':
-            resp=send_command("SHOW")
-            if resp["status"]:
-                print(resp["message"])
-                for row in resp["data"]:
-                    print(f"Name:{row['name']} Id:{row['playlist_id']}")
-            else:
-                print(resp["message"])
-        elif choice == '6':
-            user_id = int(input("Enter user id: "))
-            resp = send_command("SHOW", user_id)
+            print(resp[message])
+
+        elif choice == '5':
+            resp = send_command("SHOW")
 
             if resp["status"]:
                 print(resp["message"])
@@ -147,19 +139,41 @@ def menu(user_id):
             else:
                 print(resp["message"])
   
-        elif choice=='7':
-            id=input("Enter playlist id")
+        elif choice=='6':
+            id=input("Enter playlist id:")
             resp=send_command(f"LIST {id}")
             if resp["status"]:
                 print(resp["message"])
+                print(resp['data'])
                 for row in resp["data"]:
-                    print(f"Song ID: {row['song_id']} | Title: {row['title']}")
+                    print(f"Song name: {row['title']} | Song ID: {row['song_id']}" )
             else:
                 print(resp["message"])
-                
+        elif choice=='7':
+            song=input("Enter the name of the song:").lower()
+            resp=send_command(f"SEARCH {song}")
+            if resp["status"]:
+                print(resp["message"])
+                for row in resp["data"]:
+                    print(f"Song ID: {row['song_id']} | Title: {row['title']} | Artist: {row['artist_name']}")
+            else:
+                print(resp["message"])
         elif choice=='8':
+            p_id=input("Enter playlist id:")
+            s_id=input("Enter song id:")
+            resp=send_command(f"ADD {p_id} {s_id}")
+            print(resp["message"])
+        elif choice=='9':
+            resp=send_command("HISTORY")
+            if resp["status"]:
+                print(resp["message"])
+                for row in resp["data"]:
+                    print(f"Listened At: {row['listened_at']}| Title: {row['title']} | Song ID: {row['song_id']} | Artist: {row['artist_name']}")
+            else:
+                print(resp["message"])       
+        elif choice=='10':
             resp=send_command("EXIT")
-            print(resp)
+            print(resp['message'])
             break
         else:
             print("Invalid option")
@@ -178,30 +192,3 @@ if __name__=="__main__":
     main()
 
 
-
-
-# def write_playlist(user_id,list_playlist):
-#     #we will print the playlist here
-#     while True:
-#             print("2.Type [2] for Play \n")
-#             print("3.Type [3] for Pause \n")
-#             print("4.Type [4] for resume")
-#             print("5.Type [5] for Next \n")
-#             print("6.Type [6] for exit \n")
-#             option=input('Your choice:\n').strip()
-
-#             if option.strip()=='2':
-#                 print("1.enter the neame of the song")
-#             elif option.strip()=='3':
-#                 #keep mind how to get the return from the function and then process using the function
-#                 pause_song(user_id)
-#             elif option == '4':
-#                 resume_song(user_id)
-#             elif option.strip()=='5':
-#                 next_song(user_id)
-#             elif option.strip()=='6':
-#                 exit(user_id)
-#                 print(response["message"])
-#                 return
-#             else:
-#                 print("Invalid option.")
