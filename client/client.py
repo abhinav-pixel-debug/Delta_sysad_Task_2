@@ -1,60 +1,25 @@
+#Necessary Imports
 import socket
 import json
 import pyaudio
 import threading
+#Connection with clients
 client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 client.connect(('localhost', 65432))
-
 client.sendall("CONTROL".encode())
-
-
 handshake = json.loads(client.recv(1024).decode())
 print(handshake["message"])
 print("Connected to the server.Please verify your credentials.\n")
 
-
+# A universal command function to comuicate with the server
 def send_command(command):
     client.sendall(command.encode())
     response=json.loads(client.recv(1024).decode())
     return response
 
 
-#The TUI starts here
 
-def auth():
-    while True:
-        print("1.Type [1] for Login \n")
-        print("2.Type [2] for cretae account \n")
-        print("3.Type [3] for exit \n")
-        option=input('Your choice:\n').strip()
-
-        if option=='1':
-            username=input('Enter your username:\n')
-            password=input('Enter your password:\n')
-            response=send_command(f"LOGIN {username} {password}")
-            if response["status"]:
-                print("Login successful")
-                return response["message"]
-            else:
-                print(response["message"])
-
-        elif option.strip()=='2':
-            username=input('Enter your username:\n')
-            password=input('Enter your password:\n')
-            response=send_command(f"REGISTER {username} {password}")
-            if response["status"]:
-                print(response["message"])
-            else:
-                print(response["message"])
-
-        elif option.strip()=='3':
-            print("Bye")
-            return None
-        
-        else :
-            print("Invalid option")
-
-
+#Special function to play audio
 def play_with_pyaudio(user_id, track_id):
 
     resp = send_command(f"PLAY {track_id}")
@@ -90,7 +55,47 @@ def play_with_pyaudio(user_id, track_id):
 
 audio_thread = None
 
+#The TUI starts here
 
+
+#The auth interface
+def auth():
+    while True:
+        print("1.Type [1] for Login \n")
+        print("2.Type [2] for create account \n")
+        print("3.Type [3] for exit \n")
+        option=input('Your choice:\n').strip()
+
+        if option=='1':
+            username=input('Enter your username:\n')
+            password=input('Enter your password:\n')
+            response=send_command(f"LOGIN {username} {password}")
+            if response["status"]:
+                print("Login successful")
+                return response["message"]
+            else:
+                print(response["message"])
+
+        elif option.strip()=='2':
+            username=input('Enter your username:\n')
+            password=input('Enter your password:\n')
+            response=send_command(f"REGISTER {username} {password}")
+            if response["status"]:
+                print(response["message"])
+            else:
+                print(response["message"])
+
+        elif option.strip()=='3':
+            print("Bye")
+            return None
+        
+        else :
+            print("Invalid option")
+
+
+
+
+#The menu interface
 def menu(user_id):
     audio_thread = None
 
@@ -144,7 +149,6 @@ def menu(user_id):
             resp=send_command(f"LIST {id}")
             if resp["status"]:
                 print(resp["message"])
-                print(resp['data'])
                 for row in resp["data"]:
                     print(f"Song name: {row['title']} | Song ID: {row['song_id']}" )
             else:
@@ -179,13 +183,13 @@ def menu(user_id):
             print("Invalid option")
 
 
+# The loop to define the flow of control
 def main():
     while True:
         user_id=auth()
         if user_id is None:
             break
         menu(user_id)
-
 
 
 if __name__=="__main__":

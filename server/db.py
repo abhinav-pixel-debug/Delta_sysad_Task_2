@@ -1,5 +1,6 @@
 import sqlite3
 
+#Code to setup the database
 conn=sqlite3.connect('music_streaming/music.db',isolation_level=None)
 cursor=conn.cursor()
 

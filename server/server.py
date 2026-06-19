@@ -9,6 +9,7 @@ import time
 from collections import defaultdict
 import shutil   
 
+#Functions to take backup
 def backup_database():
     os.makedirs("music_streaming/backups", exist_ok=True)
     timestamp = time.strftime("%Y%m%d-%H%M%S")
@@ -18,13 +19,13 @@ def backup_database():
 
 def backup_loop():
     while True:
-        time.sleep(30)  
+        time.sleep(3600)  
         try:
             backup_database()
         except Exception as e:
             print(f"[BACKUP ERROR] {e}")
 
-
+# Some variables to implement rate limiting
 IP_CONNECTION_COUNT = defaultdict(int)
 FAILED_LOGINS_BY_IP = defaultdict(int)
 MAX_CONNECTIONS_PER_IP = 50    
@@ -32,6 +33,7 @@ MAX_FAILED_LOGINS_PER_IP = 5
 BAN_SECONDS = 300   
 
 
+#Defining a userstate class 
 SESSIONS={}
 class UserState:
     def __init__(self,user_id):
@@ -44,7 +46,7 @@ class UserState:
         self.buffer_health=0
         self.conn=None
 
-
+#Function to ban ip
 def ban_ip(ip): 
     now = int(time.time())
     expires = now + BAN_SECONDS
@@ -58,6 +60,7 @@ def ban_ip(ip):
     conn.close()
     print(f"[BAN] IP {ip} banned until {expires}")
 
+#To check if the ip is banned
 def is_ip_banned(ip): 
     now = int(time.time())
     conn = sqlite3.connect("music_streaming/music.db")
@@ -70,12 +73,13 @@ def is_ip_banned(ip):
     conn.close()
     return row is not None
 
+#to hash the password
 def hash_password(password):
     return hashlib.sha256(password.encode()).hexdigest()
-
+#To check the password
 def check_password(password, stored_hash):
     return hash_password(password) == stored_hash
-
+#Function to create account
 def create_user(username,password):
     password_hash=hash_password(password)
     conn=sqlite3.connect('music_streaming/music.db')
@@ -102,7 +106,7 @@ def create_user(username,password):
     finally:
         conn.close()
 
-
+#Function to verify login
 def login_user(username,password):
     conn=sqlite3.connect('music_streaming/music.db')
     cursor=conn.cursor()
@@ -136,7 +140,7 @@ def login_user(username,password):
 
 
 
-
+#Function to get the path of the song
 def get_song_path(track_id):
     conn=sqlite3.connect('music_streaming/music.db')
     cursor=conn.cursor()
@@ -161,7 +165,7 @@ def get_song_path(track_id):
     finally:
         conn.close()
 
-
+#Function to stream the dong
 def stream_song(user_state):
     track_id=user_state.current_track_id
     if track_id is None:
@@ -170,7 +174,7 @@ def stream_song(user_state):
     if conn is None:
         return
 
-    path_result=get_song_path(track_id)
+    path_result=get_song_path(track_id)#Use fo the get path function
     if not path_result["status"]:
         print(path_result["message"])
         return
@@ -197,6 +201,7 @@ def stream_song(user_state):
             user_state.playback_position+=1
             data=wf.readframes(chunk_size)
 
+#Function to create a playlist
 def create_playlist(user_id,name):
     conn=sqlite3.connect('music_streaming/music.db')
     cursor=conn.cursor()
@@ -214,7 +219,7 @@ def create_playlist(user_id,name):
         }
     finally:
         conn.close()
-
+#Function to show the playlist
 def show_playlist(user_id):
     conn = sqlite3.connect('music_streaming/music.db')
     cursor = conn.cursor()
@@ -255,7 +260,7 @@ def show_playlist(user_id):
 
     finally:
         conn.close()
-
+#Function to show all the the songs in the playlist
 def list_songs(playlist_id):
     conn = sqlite3.connect('music_streaming/music.db')
     cursor = conn.cursor()
@@ -297,7 +302,7 @@ def list_songs(playlist_id):
 
     finally:
         conn.close()
-
+#Function to search the songs 
 def search_songs(name):
     conn = sqlite3.connect('music_streaming/music.db')
     cursor = conn.cursor()
@@ -340,7 +345,7 @@ def search_songs(name):
 
     finally:
         conn.close()
-
+#Function to add the song to a playlist
 def add_to_playlist(p_id,s_id):
     conn = sqlite3.connect('music_streaming/music.db')
     cursor = conn.cursor()
@@ -358,7 +363,7 @@ def add_to_playlist(p_id,s_id):
         }
     finally:
         conn.close()
-
+#Function to create listening history
 def add_listening_history(user_id, song_id):
     conn = sqlite3.connect('music_streaming/music.db')
     cursor = conn.cursor()
@@ -371,7 +376,7 @@ def add_listening_history(user_id, song_id):
         conn.commit()
     finally:
         conn.close()
-
+#Function to vien history
 def view_history(user_id):
     conn = sqlite3.connect('music_streaming/music.db')
     cursor = conn.cursor()
@@ -422,6 +427,7 @@ def view_history(user_id):
     finally:
         conn.close()
 
+#Main function which gets the input from the client and decide which function to call and how to give output
 def process_command(msg, auth, user_state, conn, ip): 
     parts = msg.split()
 
@@ -533,7 +539,7 @@ def process_command(msg, auth, user_state, conn, ip):
 
     return {"status": False, "message": "Invalid input"}, auth, user_state
 
-
+#A function to get input from the client send it to process and get back the response and send it to client
 def handle_client(conn, addr):
     ip = addr[0]
     print(f"Connected by {addr}")
@@ -551,7 +557,7 @@ def handle_client(conn, addr):
         if IP_CONNECTION_COUNT[ip] > 0:
             IP_CONNECTION_COUNT[ip] -= 1
         print(f"Connection closed by {addr}")
-
+# A special function to handle the audio part of the client
 def handle_audio_client(conn, addr, first_line):
     print(f"[AUDIO] Connected by {addr}")
 
@@ -573,7 +579,7 @@ def handle_audio_client(conn, addr, first_line):
     user_state.conn = None
     print(f"[AUDIO CLOSED] {addr}")
 
-
+#A function which segregates the audio and normal command connection
 def dispatch_client(conn, addr):
     try:
         first = conn.recv(1024).decode().strip()
@@ -606,6 +612,7 @@ def dispatch_client(conn, addr):
             pass
         conn.close()
 
+#The server connection and setup
 server=socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 server.bind(('localhost', 65432))
 server.listen()
